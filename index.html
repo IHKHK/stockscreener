@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>港股市寬 MVP</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f6f7f9;
+      color: #111827;
+    }
+
+    header {
+      padding: 20px;
+      background: white;
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    h1 {
+      font-size: 22px;
+      margin: 0 0 6px;
+    }
+
+    h2 {
+      font-size: 18px;
+      margin: 0 0 12px;
+    }
+
+    .sub {
+      color: #6b7280;
+      font-size: 14px;
+    }
+
+    main {
+      padding: 16px;
+      max-width: 1200px;
+      margin: auto;
+    }
+
+    .card {
+      background: white;
+      border: 1px solid #e5e7eb;
+      border-radius: 14px;
+      padding: 16px;
+      margin-bottom: 16px;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.04);
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      font-size: 14px;
+      margin-bottom: 12px;
+    }
+
+    .controls label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: #f9fafb;
+      padding: 8px 10px;
+      border-radius: 999px;
+      border: 1px solid #e5e7eb;
+      cursor: pointer;
+    }
+
+    .chart-wrap {
+      position: relative;
+      height: 420px;
+      width: 100%;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    th,
+    td {
+      padding: 10px;
+      border-bottom: 1px solid #e5e7eb;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    th {
+      background: #f9fafb;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    .score {
+      font-weight: 700;
+    }
+
+    .pill {
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: #eef2ff;
+      display: inline-block;
+    }
+
+    .error {
+      color: #b91c1c;
+      background: #fee2e2;
+      border: 1px solid #fecaca;
+      padding: 10px 12px;
+      border-radius: 10px;
+      margin-top: 10px;
+      display: none;
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1>港股市寬 MVP</h1>
+    <div class="sub" id="meta">Loading...</div>
+    <div class="error" id="errorBox"></div>
+  </header>
+
+  <main>
+    <div class="card">
+      <div class="controls">
+        <label>
+          <input type="checkbox" id="ma10" checked />
+          MA10 市寬
+        </label>
+
+        <label>
+          <input type="checkbox" id="ma50" checked />
+          MA50 市寬
+        </label>
+
+        <label>
+          <input type="checkbox" id="ma150" checked />
+          MA150 市寬
+        </label>
+
+        <label>
+          <input type="checkbox" id="ma250" checked />
+          MA250 市寬
+        </label>
+
+        <label>
+          <input type="checkbox" id="bench" checked />
+          2800 對比
+        </label>
+      </div>
+
+      <div class="chart-wrap">
+        <canvas id="breadthChart"></canvas>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>板塊強弱排行</h2>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>排名</th>
+              <th>板塊</th>
+              <th>MA10</th>
+              <th>MA50</th>
+              <th>MA150</th>
+              <th>MA250</th>
+              <th>綜合強度</th>
+            </tr>
+          </thead>
+          <tbody id="sectorTable"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    let rawData = null;
+    let chart = null;
+
+    function showError(message) {
+      const box = document.getElementById("errorBox");
+      box.textContent = message;
+      box.style.display = "block";
+    }
+
+    function fmt(v) {
+      if (v === null || v === undefined || Number.isNaN(Number(v))) {
+        return "-";
+      }
+
+      return Number(v).toFixed(1) + "%";
+    }
+
+    function getLabels() {
+      return (rawData.breadth || []).map(row => row.date);
+    }
+
+    function lineData(key) {
+      return (rawData.breadth || []).map(row => {
+        const value = row[key];
+
+        if (value === null || value === undefined) {
+          return null;
+        }
+
+        return Number(value);
+      });
+    }
+
+    function benchmarkData() {
+      const labels = getLabels();
+      const benchmarkRows = rawData.benchmark || [];
+      const benchmarkMap = new Map(
+        benchmarkRows.map(row => [row.date, row.value])
+      );
+
+      return labels.map(date => {
+        const value = benchmarkMap.get(date);
+
+        if (value === null || value === undefined) {
+          return null;
+        }
+
+        return Number(value);
+      });
+    }
+
+    function buildDatasets() {
+      const datasets = [];
+
+      if (document.getElementById("ma10").checked) {
+        datasets.push({
+          label: "MA10 市寬",
+          data: lineData("ma10"),
+          borderWidth: 1.5,
+          pointRadius: 0,
+          tension: 0.15
+        });
+      }
+
+      if (document.getElementById("ma50").checked) {
+        datasets.push({
+          label: "MA50 市寬",
+          data: lineData("ma50"),
+          borderWidth: 2.5,
+          pointRadius: 0,
+          tension: 0.15
+        });
+      }
+
+      if (document.getElementById("ma150").checked) {
+        datasets.push({
+          label: "MA150 市寬",
+          data: lineData("ma150"),
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.15
+        });
+      }
+
+      if (document.getElementById("ma250").checked) {
+        datasets.push({
+          label: "MA250 市寬",
+          data: lineData("ma250"),
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.15
+        });
+      }
+
+      if (document.getElementById("bench").checked) {
+        datasets.push({
+          label: "2800 對比線",
+          data: benchmarkData(),
+          borderWidth: 2,
+          pointRadius: 0,
+          borderDash: [6, 4],
+          tension: 0.15
+        });
+      }
+
+      return datasets;
+    }
+
+    function renderChart() {
+      const canvas = document.getElementById("breadthChart");
+      const labels = getLabels();
+      const datasets = buildDatasets();
+
+      if (chart) {
+        chart.data.labels = labels;
+        chart.data.datasets = datasets;
+        chart.update();
+        return;
+      }
+
+      chart = new Chart(canvas, {
+        type: "line",
+        data: {
+          labels,
+          datasets
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: {
+            mode: "index",
+            intersect: false
+          },
+          scales: {
+            x: {
+              ticks: {
+                maxTicksLimit: 10
+              }
+            },
+            y: {
+              min: 0,
+              max: 100,
+              title: {
+                display: true,
+                text: "市寬 %"
+              }
+            }
+          },
+          plugins: {
+            legend: {
+              position: "top"
+            },
+            tooltip: {
+              callbacks: {
+                label: context => {
+                  const y = context.parsed.y;
+
+                  if (y === null || y === undefined || Number.isNaN(Number(y))) {
+                    return context.dataset.label + ": -";
+                  }
+
+                  return context.dataset.label + ": " + Number(y).toFixed(1);
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+
+    function renderSectorTable() {
+      const tbody = document.getElementById("sectorTable");
+      const items = rawData.latestSectorStrength?.items || [];
+
+      tbody.innerHTML = "";
+
+      items.forEach((row, index) => {
+        const tr = document.createElement("tr");
+
+        const strength =
+          row.strengthScore === null || row.strengthScore === undefined
+            ? "-"
+            : Number(row.strengthScore).toFixed(1);
+
+        tr.innerHTML = `
+          <td>${index + 1}</td>
+          <td><span class="pill">${row.sector}</span></td>
+          <td>${fmt(row.ma10)}</td>
+          <td>${fmt(row.ma50)}</td>
+          <td>${fmt(row.ma150)}</td>
+          <td>${fmt(row.ma250)}</td>
+          <td class="score">${strength}</td>
+        `;
+
+        tbody.appendChild(tr);
+      });
+    }
+
+    async function loadData() {
+      const response = await fetch("./data/breadth.json", {
+        cache: "no-store"
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          "讀取 ./data/breadth.json 失敗，HTTP status: " + response.status
+        );
+      }
+
+      return await response.json();
+    }
+
+    async function main() {
+      try {
+        rawData = await loadData();
+
+        const updatedAt = rawData.updatedAt || "-";
+        const universeName = rawData.universe?.name || "-";
+        const stockCount = rawData.universe?.stockCount ?? "-";
+        const plannedStockCount = rawData.universe?.plannedStockCount ?? stockCount;
+
+        document.getElementById("meta").textContent =
+          `Updated: ${updatedAt} · Universe: ${universeName} · Stocks: ${stockCount}/${plannedStockCount}`;
+
+        renderChart();
+        renderSectorTable();
+
+        ["ma10", "ma50", "ma150", "ma250", "bench"].forEach(id => {
+          document.getElementById(id).addEventListener("change", renderChart);
+        });
+      } catch (error) {
+        console.error(error);
+        document.getElementById("meta").textContent = "資料載入失敗";
+        showError(error.message);
+      }
+    }
+
+    main();
+  </script>
+</body>
+</html>
